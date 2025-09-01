@@ -7,27 +7,6 @@ import * as cheerio from "cheerio";
 const app = express();
 app.use(express.json());
 
-// Add CORS middleware
-app.use((req, res, next) => {
-  const allowedOrigin = 'https://webuypickleball.newwebgrids.com';
-  const origin = req.headers.origin;
-
-  // Allow only your WordPress site
-  if (origin === allowedOrigin) {
-    res.header('Access-Control-Allow-Origin', origin);
-  }
-
-  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-
-  // Handle preflight (OPTIONS) requests
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  next();
-});
-
 // 🔒 INTERNAL ONLY — do not expose in responses
 const SOURCE_URL = "https://www.pickleballwarehouse.com/usedpaddles.html";
 
@@ -39,7 +18,6 @@ function normalize(str = "") {
 }
 
 function priceParse(priceText) {
-  // Returns { lo, hi, mid } or null
   const nums = (priceText.match(/[\d]+\.\d{2}/g) || []).map(v => parseFloat(v));
   if (!nums.length) return null;
   const lo = Math.min(...nums);
@@ -48,26 +26,62 @@ function priceParse(priceText) {
   return { lo, hi, mid };
 }
 
+// Enhanced headers to mimic a real browser
+const HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Connection": "keep-alive",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+  "Cache-Control": "max-age=0"
+};
+
+// Retry with exponential backoff
+async function fetchWithRetry(url, options, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(url, { ...options, compress: true });
+      if (res.status === 406 || res.status >= 500) {
+        console.warn(`Attempt ${i + 1}: Received ${res.status}, retrying...`);
+        if (i === retries - 1) return res; // Return on last try
+        await new Promise(r => setTimeout(r, 3000 * (i + 1))); // back off
+        continue;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res;
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      console.warn(`Network error (attempt ${i + 1}), retrying...`, err.message);
+      await new Promise(r => setTimeout(r, 3000 * (i + 1)));
+    }
+  }
+}
+
 async function scrapeUsedPaddles() {
   const now = Date.now();
-  if (CACHE.data && now - CACHE.fetchedAt < CACHE.ttlMs) return CACHE.data;
+  if (CACHE.data && now - CACHE.fetchedAt < CACHE.ttlMs) {
+    console.log("✅ Using cached paddle data");
+    return CACHE.data;
+  }
+
+  console.log("🔍 Fetching live used paddles from pickleballwarehouse.com...");
 
   try {
-    const res = await fetch(SOURCE_URL, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-    });
-
-    if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
-
+    const res = await fetchWithRetry(SOURCE_URL, { headers: HEADERS });
     const html = await res.text();
-    const $ = cheerio.load(html);
 
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: Failed to fetch page`);
+    }
+
+    const $ = cheerio.load(html);
     const items = [];
 
-    // Broad selector to capture product items
     $("[data-product-item], .product, .grid-item, li, .item").each((_, el) => {
       const el$ = $(el);
       const nameText =
@@ -82,13 +96,12 @@ async function scrapeUsedPaddles() {
           .replace(/\s+/g, " ")
           .trim();
 
-      // Heuristic: keep only if name and price with $ are present
       if (nameText && /\$[\d]/.test(priceText)) {
         items.push({ name: nameText, price: priceText });
       }
     });
 
-    // Deduplicate by normalized name (keep most complete price)
+    // Deduplicate by normalized name
     const byName = new Map();
     for (const it of items) {
       const key = normalize(it.name);
@@ -99,9 +112,16 @@ async function scrapeUsedPaddles() {
 
     const data = Array.from(byName.values());
     CACHE = { data, fetchedAt: now, ttlMs: CACHE.ttlMs };
+
+    console.log(`✅ Scraped ${data.length} used paddles`);
     return data;
   } catch (err) {
-    console.error("Scraping error:", err.message);
+    console.error("❌ Scrape failed:", err.message);
+    // Return cached data if available, even if stale
+    if (CACHE.data) {
+      console.warn("⚠️  Using stale cache due to scrape failure");
+      return CACHE.data;
+    }
     throw err;
   }
 }
@@ -110,45 +130,59 @@ function bestMatch(model, dataset) {
   const q = normalize(model);
   if (!q) return null;
 
-  // 1. Substring match (longer overlap wins)
-  let candidate = null;
-  for (const item of dataset) {
-    const n = normalize(item.name);
-    if (n.includes(q) || q.includes(n)) {
-      const score = Math.min(n.length, q.length);
-      if (!candidate || score > candidate.score) {
-        candidate = { ...item, score };
-      }
+  // Model aliases
+  const ALIASES = {
+    "peresus pro 4": "peresus pro iv",
+    "peresus pro iv": "peresus pro iv",
+    "ben johns perseus": "peresus pro iv",
+    "joola perseus": "peresus pro iv",
+    "perseus pro": "peresus pro",
+    "bantam exps": "bantam exps",
+    "bantam xl": "bantam xl",
+    "onyx pro": "onyx"
+  };
+
+  let normalizedQuery = q;
+  for (const [alias, target] of Object.entries(ALIASES)) {
+    if (normalizedQuery.includes(alias)) {
+      normalizedQuery = target;
+      break;
     }
   }
-  if (candidate) return candidate;
 
-  // 2. Fallback: token overlap
-  const qTokens = q.split(" ").filter(Boolean);
-  let alt = null;
+  // 1. Substring match
+  for (const item of dataset) {
+    const n = normalize(item.name);
+    if (n.includes(normalizedQuery) || normalizedQuery.includes(n)) {
+      return item;
+    }
+  }
+
+  // 2. Token overlap fallback
+  const qTokens = normalizedQuery.split(" ").filter(Boolean);
+  let best = null;
   for (const item of dataset) {
     const n = normalize(item.name);
     const hits = qTokens.filter(t => n.includes(t)).length;
-    if (hits > 0 && (!alt || hits > alt.hits || (hits === alt.hits && item.name.length > alt.name.length))) {
-      alt = { ...item, hits };
+    if (hits > 0 && (!best || hits > best.hits)) {
+      best = { ...item, hits };
     }
   }
-  return alt;
+  return best;
 }
 
-// Public API — never reveals the source URL in responses
+// Public API — never reveals the source URL
 app.post("/offer", async (req, res) => {
   try {
     const { model, condition, notes } = req.body || {};
     if (!model || !condition) {
       return res.status(400).json({
         ok: false,
-        error: "Missing required fields: model, condition",
+        error: "Missing required fields: model, condition"
       });
     }
 
     const dataset = await scrapeUsedPaddles();
-    console.log("Scraped paddles:", CACHE.data.slice(0, 5).map(p => p.name).join("\n"));
     const match = bestMatch(model, dataset);
 
     if (!match) {
@@ -157,7 +191,7 @@ app.post("/offer", async (req, res) => {
         found: false,
         offer: null,
         message: "Model not currently available for offer calculation.",
-        echo: { submittedModel: model, condition, notes: notes || "" },
+        echo: { submittedModel: model, condition, notes: notes || "" }
       });
     }
 
@@ -168,7 +202,7 @@ app.post("/offer", async (req, res) => {
         found: true,
         offer: null,
         message: "Price unavailable for matched model.",
-        echo: { submittedModel: model, condition, notes: notes || "" },
+        echo: { submittedModel: model, condition, notes: notes || "" }
       });
     }
 
@@ -185,14 +219,14 @@ app.post("/offer", async (req, res) => {
         model: match.name,
         submittedModel: model,
         condition,
-        notes: notes || "",
-      },
+        notes: notes || ""
+      }
     });
   } catch (err) {
     console.error("Server error:", err);
     res.status(500).json({
       ok: false,
-      error: "Offer calculation failed. Please try again shortly.",
+      error: "Offer calculation failed. Please try again shortly."
     });
   }
 });
