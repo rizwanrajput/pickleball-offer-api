@@ -7,16 +7,18 @@ import * as cheerio from "cheerio";
 const app = express();
 app.use(express.json());
 
-// ✅ CORRECT SOURCE URL — now with real listings
+// ✅ CORRECT SOURCE URL — actual used paddle listings
 const SOURCE_URL = "https://pickleballcentral.com/deals/used-pickleball-paddles/";
 
-// Simple in-memory cache (5-minute TTL)
-let CACHE = { data: null, fetchedAt: 0, ttlMs: 5 * 60 * 1000 };
+// In-memory cache (5-minute TTL)
+let CACHE = {  null: null, fetchedAt: 0, ttlMs: 5 * 60 * 1000 };
 
+// Normalize text for matching
 function normalize(str = "") {
   return str.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+// Parse price string into lo, hi, mid
 function priceParse(priceText) {
   const nums = (priceText.match(/[\d]+\.\d{2}/g) || []).map(v => parseFloat(v));
   if (!nums.length) return null;
@@ -26,7 +28,7 @@ function priceParse(priceText) {
   return { lo, hi, mid };
 }
 
-// Enhanced headers to mimic a real browser
+// Enhanced browser-like headers to avoid 406
 const HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -37,7 +39,6 @@ const HEADERS = {
   "Sec-Fetch-Dest": "document",
   "Sec-Fetch-Mode": "navigate",
   "Sec-Fetch-Site": "none",
-  "Sec-Fetch-User": "?1",
   "Cache-Control": "max-age=0"
 };
 
@@ -62,6 +63,7 @@ async function fetchWithRetry(url, options, retries = 3) {
   }
 }
 
+// Scrape used paddles from Pickleball Central
 async function scrapeUsedPaddles() {
   const now = Date.now();
   if (CACHE.data && now - CACHE.fetchedAt < CACHE.ttlMs) {
@@ -69,18 +71,17 @@ async function scrapeUsedPaddles() {
     return CACHE.data;
   }
 
-  console.log("🔍 Fetching used paddles from pickleballcentral.com/deals...");
-
+  console.log("🔍 Fetching used paddles from pickleballcentral.com...");
   try {
     const res = await fetchWithRetry(SOURCE_URL, { headers: HEADERS });
     const html = await res.text();
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch`);
 
     const $ = cheerio.load(html);
     const items = [];
 
-    // ✅ Pickleball Central uses .grid__item for each product
+    // Pickleball Central uses .grid__item .product-item
     $('.grid__item .product-item').each((_, el) => {
       const el$ = $(el);
       const name = el$.find('.product-item__title a').text().trim();
@@ -108,18 +109,19 @@ async function scrapeUsedPaddles() {
   } catch (err) {
     console.error("❌ Scrape failed:", err.message);
     if (CACHE.data) {
-      console.warn("⚠️ Using stale cache due to failure");
+      console.warn("⚠️ Using stale cache due to scrape failure");
       return CACHE.data;
     }
     throw err;
   }
 }
 
+// Enhanced matching with model aliases
 function bestMatch(model, dataset) {
   const q = normalize(model);
   if (!q) return null;
 
-  // ✅ Model aliases for common variations
+  // Model aliases for common variations
   const ALIASES = {
     "peresus pro 4": "peresus pro iv",
     "peresus pro iv": "peresus pro iv",
