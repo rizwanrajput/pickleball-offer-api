@@ -11,7 +11,7 @@ app.use(express.json());
 const SOURCE_URL = "https://pickleballcentral.com/deals/used-pickleball-paddles/";
 
 // Simple in-memory cache (5-minute TTL)
-let CACHE = {  null, fetchedAt: 0, ttlMs: 5 * 60 * 1000 };
+let CACHE = { data: null, fetchedAt: 0, ttlMs: 5 * 60 * 1000 };
 
 function normalize(str = "") {
   return str.toLowerCase().replace(/\s+/g, " ").trim();
