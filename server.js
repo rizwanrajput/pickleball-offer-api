@@ -7,11 +7,11 @@ import * as cheerio from "cheerio";
 const app = express();
 app.use(express.json());
 
-// 🔒 INTERNAL ONLY — do not expose in responses
-const SOURCE_URL = "https://www.pickleballwarehouse.com/usedpaddles.html";
+// ✅ CORRECT SOURCE URL — now with real listings
+const SOURCE_URL = "https://pickleballcentral.com/deals/used-pickleball-paddles/";
 
 // Simple in-memory cache (5-minute TTL)
-let CACHE = { data: null, fetchedAt: 0, ttlMs: 5 * 60 * 1000 };
+let CACHE = {  null, fetchedAt: 0, ttlMs: 5 * 60 * 1000 };
 
 function normalize(str = "") {
   return str.toLowerCase().replace(/\s+/g, " ").trim();
@@ -48,8 +48,8 @@ async function fetchWithRetry(url, options, retries = 3) {
       const res = await fetch(url, { ...options, compress: true });
       if (res.status === 406 || res.status >= 500) {
         console.warn(`Attempt ${i + 1}: Received ${res.status}, retrying...`);
-        if (i === retries - 1) return res; // Return on last try
-        await new Promise(r => setTimeout(r, 3000 * (i + 1))); // back off
+        if (i === retries - 1) return res;
+        await new Promise(r => setTimeout(r, 3000 * (i + 1)));
         continue;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -69,35 +69,25 @@ async function scrapeUsedPaddles() {
     return CACHE.data;
   }
 
-  console.log("🔍 Fetching live used paddles from pickleballwarehouse.com...");
+  console.log("🔍 Fetching used paddles from pickleballcentral.com/deals...");
 
   try {
     const res = await fetchWithRetry(SOURCE_URL, { headers: HEADERS });
     const html = await res.text();
 
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: Failed to fetch page`);
-    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const $ = cheerio.load(html);
     const items = [];
 
-    $("[data-product-item], .product, .grid-item, li, .item").each((_, el) => {
+    // ✅ Pickleball Central uses .grid__item for each product
+    $('.grid__item .product-item').each((_, el) => {
       const el$ = $(el);
-      const nameText =
-        el$.find(".product-title, .title, .name, a[title]").first().text().trim() ||
-        el$.find("a").first().attr("title") ||
-        el$.find("a").first().text().trim();
+      const name = el$.find('.product-item__title a').text().trim();
+      const price = el$.find('.price__current').text().replace(/\s+/g, ' ').trim();
 
-      const priceText =
-        el$.find(".price, .product-price, .sale-price, .amount, .pricing")
-          .first()
-          .text()
-          .replace(/\s+/g, " ")
-          .trim();
-
-      if (nameText && /\$[\d]/.test(priceText)) {
-        items.push({ name: nameText, price: priceText });
+      if (name && price && /\$/.test(price)) {
+        items.push({ name, price });
       }
     });
 
@@ -117,9 +107,8 @@ async function scrapeUsedPaddles() {
     return data;
   } catch (err) {
     console.error("❌ Scrape failed:", err.message);
-    // Return cached data if available, even if stale
     if (CACHE.data) {
-      console.warn("⚠️  Using stale cache due to scrape failure");
+      console.warn("⚠️ Using stale cache due to failure");
       return CACHE.data;
     }
     throw err;
@@ -130,7 +119,7 @@ function bestMatch(model, dataset) {
   const q = normalize(model);
   if (!q) return null;
 
-  // Model aliases
+  // ✅ Model aliases for common variations
   const ALIASES = {
     "peresus pro 4": "peresus pro iv",
     "peresus pro iv": "peresus pro iv",
