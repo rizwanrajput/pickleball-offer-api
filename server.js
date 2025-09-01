@@ -7,6 +7,25 @@ import * as cheerio from "cheerio";
 const app = express();
 app.use(express.json());
 
+// ✅ Add CORS middleware here
+app.use((req, res, next) => {
+  const allowedOrigin = 'https://webuypickleball.newwebgrids.com';
+  const origin = req.headers.origin;
+
+  if (origin === allowedOrigin) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  next();
+});
+
 // ✅ CORRECT SOURCE URL — actual used paddle listings
 const SOURCE_URL = "https://pickleballcentral.com/deals/used-pickleball-paddles/";
 
