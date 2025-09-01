@@ -7,6 +7,27 @@ import * as cheerio from "cheerio";
 const app = express();
 app.use(express.json());
 
+// Add CORS middleware
+app.use((req, res, next) => {
+  const allowedOrigin = 'https://webuypickleball.newwebgrids.com';
+  const origin = req.headers.origin;
+
+  // Allow only your WordPress site
+  if (origin === allowedOrigin) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight (OPTIONS) requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  next();
+});
+
 // 🔒 INTERNAL ONLY — do not expose in responses
 const SOURCE_URL = "https://www.pickleballwarehouse.com/usedpaddles.html";
 
