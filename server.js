@@ -148,6 +148,7 @@ app.post("/offer", async (req, res) => {
     }
 
     const dataset = await scrapeUsedPaddles();
+    console.log("Scraped paddles:", CACHE.data.slice(0, 5).map(p => p.name).join("\n"));
     const match = bestMatch(model, dataset);
 
     if (!match) {
