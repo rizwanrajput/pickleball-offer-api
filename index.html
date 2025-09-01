@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Get a Fixed Offer for Your Pickleball Paddle</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      max-width: 860px;
+      margin: 40px auto;
+      padding: 0 16px;
+      line-height: 1.6;
+    }
+    .card {
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 16px;
+      margin: 14px 0;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin: 8px 0 4px;
+    }
+    input, select, textarea {
+      width: 100%;
+      padding: 0.7rem;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      font-size: 1rem;
+    }
+    button {
+      padding: 0.7rem 1rem;
+      border-radius: 10px;
+      border: 1px solid #111827;
+      background: #111827;
+      color: #fff;
+      cursor: pointer;
+      font-size: 1rem;
+      margin-top: 12px;
+    }
+    button:hover {
+      background: #000;
+      border-color: #000;
+    }
+    .muted {
+      color: #6b7280;
+      font-size: 0.95rem;
+    }
+    .small {
+      font-size: 0.85rem;
+    }
+    .result {
+      font-weight: 800;
+      font-size: 1.25rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Get a Fixed Offer for Your Paddle</h1>
+  <p>We buy used pickleball paddles instantly. Just enter your paddle details below — we’ll calculate a fair offer based on current market value.</p>
+
+  <div class="card">
+    <label for="model">Paddle Brand/Model</label>
+    <input id="model" placeholder="e.g., JOOLA Ben Johns Perseus Pro IV" autocomplete="off">
+
+    <label for="cond">Condition</label>
+    <select id="cond">
+      <option value="New unused">New unused</option>
+      <option value="Excellent">Excellent</option>
+      <option value="Good">Good</option>
+      <option value="Fair">Fair</option>
+    </select>
+
+    <label for="notes">Notes (optional)</label>
+    <textarea id="notes" rows="3" placeholder="Grip size, customizations, scratches, etc."></textarea>
+
+    <button id="go">Get Fixed Offer</button>
+    <p class="muted" style="margin-top:8px;">Offers are calculated automatically based on current used market data. No external references shown.</p>
+  </div>
+
+  <div id="out" class="card" style="display:none;">
+    <div id="offer" class="result"></div>
+    <div id="details" class="muted" style="margin-top:.5rem;"></div>
+    <div id="echo" class="muted small" style="margin-top:.75rem;"></div>
+  </div>
+
+  <script>
+    // 🔁 IMPORTANT: Replace this URL with your actual Render app URL
+    const API = "https://pickleball-offer-api.onrender.com/offer";
+
+    document.getElementById("go").addEventListener("click", async () => {
+      const model = document.getElementById("model").value.trim();
+      const condition = document.getElementById("cond").value;
+      const notes = document.getElementById("notes").value.trim();
+      const out = document.getElementById("out");
+      const offerEl = document.getElementById("offer");
+      const detailsEl = document.getElementById("details");
+      const echoEl = document.getElementById("echo");
+
+      // Show loading state
+      offerEl.textContent = "Calculating your offer...";
+      detailsEl.textContent = "";
+      echoEl.textContent = "";
+      out.style.display = "block";
+
+      try {
+        const res = await fetch(API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model, condition, notes })
+        });
+
+        const data = await res.json();
+
+        if (!data.ok || !data.found || data.offer === null) {
+          offerEl.textContent = "No offer available for this model.";
+          detailsEl.textContent = "Please check the model name and try again.";
+        } else {
+          offerEl.textContent = `Offer: $${data.offer.toFixed(2)}`;
+          detailsEl.textContent = `Based on current used market value: ${data.referencePrice} (midpoint $${data.referenceMidpoint}). Offer is 50% of midpoint.`;
+        }
+
+        const m = data.echo || {};
+        echoEl.textContent = `Submitted: “${m.submittedModel}” — ${m.condition}${m.notes ? ' — ' + m.notes : ''}`;
+      } catch (e) {
+        offerEl.textContent = "We couldn't calculate an offer right now.";
+        detailsEl.textContent = "Please try again later.";
+        console.error("API Error:", e);
+      }
+    });
+  </script>
+</body>
+</html>
